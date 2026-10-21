@@ -1,0 +1,30 @@
+opc2ixon
+========
+
+DISCLAIMER - NOT AN OFFICIAL IXON PRODUCT
+This tool is a personal side project of an IXON solution engineer, made to help customers.
+It is not developed, released, maintained or supported by IXON. It is provided "as is",
+without warranty of any kind; use it at your own risk. Neither the author nor IXON accepts
+any liability for its use. Always check the exported variables before using them in production.
+
+This application is distributed together with third party open source components.
+The full list of components, versions and license texts is in THIRD_PARTY_LICENSES.txt.
+
+Qt for Python (PySide6, shiboken6) and the Qt libraries
+--------------------------------------------------------
+The Qt libraries and Qt for Python are used under the terms of the GNU Lesser General
+Public License version 3 (LGPLv3).
+
+- License texts: https://www.gnu.org/licenses/lgpl-3.0.html
+                 https://www.gnu.org/licenses/gpl-3.0.html
+- Source code:   https://code.qt.io/cgit/pyside/pyside-setup.git/
+                 https://download.qt.io/official_releases/QtForPython/
+                 https://download.qt.io/official_releases/qt/
+
+The Qt / PySide6 libraries are shipped as separate, unmodified shared libraries inside the
+application folder and can be replaced by the user with a compatible version.
+
+asyncua (opcua-asyncio)
+-----------------------
+Used under the GNU Lesser General Public License v3 or later.
+Source code: https://github.com/FreeOpcUa/opcua-asyncio

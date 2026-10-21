@@ -1,0 +1,4 @@
+asyncua==2.1.0
+PySide6-Essentials==6.10.2
+keyring>=25.0
+platformdirs>=4.0

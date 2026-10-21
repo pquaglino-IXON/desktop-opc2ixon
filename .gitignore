@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+.venv-build/
+build/
+dist/
+packaging/THIRD_PARTY_LICENSES.txt
+riferimenti/
+tools/.demo_pki/
+.DS_Store
+.pytest_cache/
+
