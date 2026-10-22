@@ -31,7 +31,8 @@ rem --- third party licenses (shipped with the app) ----------------------------
 rem --- build ---------------------------------------------------------------------------
 ".venv-build\Scripts\pyinstaller.exe" --noconfirm --clean --log-level ERROR packaging\opc2ixon.spec || goto :error
 
-for /f "delims=" %%v in ('"%PYB%" -c "import opc2ixon as m; print(m.__version__)"') do set "VERSION=%%v"
+for /f "delims=" %%v in ('.venv-build\Scripts\python.exe -c "import opc2ixon as m; print(m.__version__)"') do set "VERSION=%%v"
+if not defined VERSION goto :error
 set "ZIP=opc2ixon-%VERSION%-Windows.zip"
 rem zip content: opc2ixon\opc2ixon.exe + license notices next to it
 copy /y packaging\NOTICE.txt dist\opc2ixon\ >nul || goto :error
