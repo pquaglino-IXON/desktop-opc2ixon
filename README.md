@@ -33,6 +33,7 @@ A demo server (Siemens-like and Beckhoff-like address space, ~530 variables) is 
 ```bash
 python tools/demo_server.py            # anonymous on opc.tcp://localhost:4840
 python tools/demo_server.py --users    # username demo / password demo
+python tools/demo_server.py --max-nodes 128 [--hide-limits]   # server limited to 128 nodes per request
 ```
 
 Then start the app and use the profile *Demo server (localhost)*.
@@ -45,7 +46,10 @@ Secure endpoints offered by the demo server: `Basic256Sha256` with `Sign` / `Sig
    exported; they can optionally be stored in the system keychain). Changes are stored only with
    **Save** (Ctrl+S / ⌘S); with unsaved changes the app asks before switching profile, connecting
    or quitting (*Don't Save* on Connect uses the values on screen for that connection only).
-2. **Connect & Browse** – full scan of the address space in the background.
+2. **Connect & Browse** – full scan of the address space in the background. Requests are split
+   according to the limits the server declares (OperationLimits MaxNodesPerRead/MaxNodesPerBrowse);
+   if the server still answers `BadTooManyOperations`, the request size is halved automatically.
+   **Browse → Max nodes per request** forces a fixed size (Auto = default).
 3. **Select** – all supported variables are checked by default; tree with tri-state checkboxes,
    filter, check all / uncheck all / invert (on the filtered items when a filter is active).
    Unsupported variables are shown in grey with the reason.

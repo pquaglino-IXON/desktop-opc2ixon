@@ -101,3 +101,42 @@ def test_no_identifier_over_64_in_export():
     ids = [r.row.identifier for r in rows]
     assert len(set(ids)) == len(ids) and max(map(len, ids)) <= 64
     assert all("---" in i for i in ids)
+
+
+def test_too_many_operations_stops_with_clear_error():
+    import asyncio
+
+    import pytest
+    from asyncua import ua
+
+    from opc2ixon.opc.browser import Browser
+    from opc2ixon.opc.client import ConnectionError_
+    from opc2ixon.profiles import Profile
+
+    calls = []
+
+    class FakeUaClient:
+        async def read_attributes(self, nids, attr):
+            calls.append(len(nids))
+            raise ua.uaerrors.BadTooManyOperations()
+
+    class FakeClient:
+        uaclient = FakeUaClient()
+
+    b = Browser(FakeClient(), Profile())
+    with pytest.raises(ConnectionError_) as e:
+        asyncio.run(b._read_many([ua.NodeId(i, 2) for i in range(1000)], ua.AttributeIds.Value))
+    assert calls == [500, 250, 125, 62, 31, 15, 7, 3, 1]  # always smaller, stops at 1
+    assert "Max nodes per request" in str(e.value)
+
+    calls.clear()
+
+    class OtherError(FakeUaClient):
+        async def read_attributes(self, nids, attr):
+            calls.append(len(nids))
+            raise ua.uaerrors.BadTimeout()
+
+    FakeClient.uaclient = OtherError()
+    with pytest.raises(ua.uaerrors.BadTimeout):
+        asyncio.run(Browser(FakeClient(), Profile())._read_many([ua.NodeId(1, 2)] * 10, ua.AttributeIds.Value))
+    assert calls == [10]  # other errors: no retry

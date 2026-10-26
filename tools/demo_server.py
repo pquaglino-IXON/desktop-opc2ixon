@@ -3,6 +3,8 @@
     python tools/demo_server.py                # anonymous, opc.tcp://localhost:4840
     python tools/demo_server.py --users        # requires username demo / password demo
     python tools/demo_server.py --port 4841
+    python tools/demo_server.py --max-nodes 128   # server limited to 128 nodes per request
+    python tools/demo_server.py --max-nodes 128 --hide-limits   # ... without declaring it
 
 Offers the endpoints None, Basic256Sha256 Sign and Basic256Sha256 SignAndEncrypt.
 The address space mimics Siemens (string NodeIds with quotes) and Beckhoff
@@ -35,7 +37,26 @@ class DemoUsers:
         return None
 
 
-async def build(port: int, users: bool) -> Server:
+def _limit_requests(max_nodes: int) -> None:
+    """Simulate a server that refuses Read/Browse requests with more than max_nodes nodes."""
+    from asyncua.server.internal_session import InternalSession
+
+    orig_read, orig_browse = InternalSession.read, InternalSession.browse
+
+    async def read(self, params):
+        if len(params.NodesToRead) > max_nodes:
+            raise ua.uaerrors.BadTooManyOperations()
+        return await orig_read(self, params)
+
+    async def browse(self, params):
+        if len(params.NodesToBrowse) > max_nodes:
+            raise ua.uaerrors.BadTooManyOperations()
+        return await orig_browse(self, params)
+
+    InternalSession.read, InternalSession.browse = read, browse
+
+
+async def build(port: int, users: bool, max_nodes: int = 0, declare_limits: bool = True) -> Server:
     server = Server(user_manager=DemoUsers() if users else None)
     await server.init()
     uri = f"urn:{socket.gethostname()}:opc2ixon:DemoServer"
@@ -161,6 +182,14 @@ async def build(port: int, users: bool) -> Server:
             await grp.add_variable(
                 ua.NodeId(f"Bulk.G{g}.V{k}", ns), ua.QualifiedName(f"Value {k}", ns), float(k), ua.VariantType.Float
             )
+    if max_nodes:
+        _limit_requests(max_nodes)
+        if declare_limits:
+            for oid in (
+                ua.ObjectIds.Server_ServerCapabilities_OperationLimits_MaxNodesPerRead,
+                ua.ObjectIds.Server_ServerCapabilities_OperationLimits_MaxNodesPerBrowse,
+            ):
+                await server.get_node(ua.NodeId(oid)).write_value(ua.Variant(max_nodes, ua.VariantType.UInt32))
     return server
 
 
@@ -168,9 +197,13 @@ async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=4840)
     ap.add_argument("--users", action="store_true", help="require username demo / password demo")
+    ap.add_argument("--max-nodes", type=int, default=0,
+                    help="refuse Read/Browse requests with more nodes (BadTooManyOperations)")
+    ap.add_argument("--hide-limits", action="store_true",
+                    help="with --max-nodes: do not declare the limit in OperationLimits")
     args = ap.parse_args()
     logging.basicConfig(level=logging.WARNING)
-    server = await build(args.port, args.users)
+    server = await build(args.port, args.users, args.max_nodes, not args.hide_limits)
     async with server:
         print(f"Demo server running on opc.tcp://localhost:{args.port}  (Ctrl+C to stop)")
         while True:

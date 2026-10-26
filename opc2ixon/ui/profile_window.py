@@ -154,7 +154,7 @@ class ProfileWindow(QMainWindow):
             w.currentTextChanged.connect(self._update_dirty)
         for w in (self.f_remember, self.f_ns0, self.f_arrays, self.f_units):
             w.toggled.connect(self._update_dirty)
-        for w in (self.f_timeout, self.f_depth, self.f_strlen):
+        for w in (self.f_timeout, self.f_depth, self.f_maxnodes, self.f_strlen):
             w.valueChanged.connect(self._update_dirty)
 
     def _mark_clean(self):
@@ -276,10 +276,19 @@ class ProfileWindow(QMainWindow):
         self.f_arrays = QCheckBox("Expand arrays into single elements")
         self.f_depth = QSpinBox()
         self.f_depth.setRange(1, 100)
+        self.f_maxnodes = QSpinBox()
+        self.f_maxnodes.setRange(0, 10000)
+        self.f_maxnodes.setSpecialValueText("Auto")
+        self.f_maxnodes.setToolTip(
+            "Maximum number of nodes asked to the server in one request.\n"
+            "Auto: uses the limits declared by the server and automatically retries with smaller\n"
+            "requests if the server answers BadTooManyOperations. Set a number only if Auto fails."
+        )
         f.addRow("Start node", self.f_start)
         f.addRow("", self.f_ns0)
         f.addRow("Arrays", self.f_arrays)
         f.addRow("Max depth", self.f_depth)
+        f.addRow("Max nodes per request", self.f_maxnodes)
         hint = QLabel(
             "Tip: after browsing, right-click a folder → 'Use as start node' to store it in this profile."
         )
@@ -410,6 +419,7 @@ class ProfileWindow(QMainWindow):
         self.f_ns0.setChecked(p.ignore_ns0)
         self.f_arrays.setChecked(p.expand_arrays)
         self.f_depth.setValue(p.max_depth)
+        self.f_maxnodes.setValue(p.max_nodes_per_request)
         self.f_strlen.setValue(p.default_str_len)
         self.f_units.setChecked(p.units_from_server)
         self.f_factor.setText(p.default_factor)
@@ -435,6 +445,7 @@ class ProfileWindow(QMainWindow):
             ignore_ns0=self.f_ns0.isChecked(),
             expand_arrays=self.f_arrays.isChecked(),
             max_depth=self.f_depth.value(),
+            max_nodes_per_request=self.f_maxnodes.value(),
             default_str_len=self.f_strlen.value(),
             units_from_server=self.f_units.isChecked(),
             default_factor=self.f_factor.text().strip().replace(",", "."),

@@ -68,3 +68,40 @@ def test_secure_username(mode):
     )
     root = asyncio.run(_run(p, users=True, password="demo"))
     assert root.count_exportable() > 500
+
+
+@pytest.mark.parametrize(
+    "declare, manual, expect_read",
+    [
+        (True, 0, 128),  # limit declared in OperationLimits -> used directly
+        (False, 0, None),  # limit not declared -> automatic fallback halves the requests
+        (False, 50, 50),  # manual value in the profile
+    ],
+)
+def test_server_with_request_limit(declare, manual, expect_read):
+    from asyncua.server.internal_session import InternalSession
+
+    from opc2ixon.opc.browser import Browser
+
+    orig = InternalSession.read, InternalSession.browse
+
+    async def run():
+        p = Profile(endpoint=f"opc.tcp://127.0.0.1:{PORT}", max_nodes_per_request=manual)
+        server = await build(PORT, False, max_nodes=128, declare_limits=declare)
+        async with server:
+            cl = await opc.connect(p, "", None)
+            try:
+                b = Browser(cl, p)
+                root = await b.run()
+                return b, root
+            finally:
+                await cl.disconnect()
+
+    try:
+        b, root = asyncio.run(run())
+    finally:
+        InternalSession.read, InternalSession.browse = orig
+    assert root.count_exportable() > 500
+    assert b.read_chunk <= 128 and b.browse_chunk <= 128
+    if expect_read:
+        assert b.read_chunk == expect_read

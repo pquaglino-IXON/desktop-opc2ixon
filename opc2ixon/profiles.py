@@ -60,6 +60,7 @@ class Profile:
     ignore_ns0: bool = True
     expand_arrays: bool = True
     max_depth: int = 25
+    max_nodes_per_request: int = 0  # 0 = automatic (server limits + fallback)
     # Export
     default_str_len: int = 255
     units_from_server: bool = False

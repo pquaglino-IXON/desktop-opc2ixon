@@ -6,12 +6,14 @@ which is fast even on PLCs with a few thousand nodes.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable
 
 from asyncua import Client, ua
 
 from ..profiles import Profile
+from .client import ConnectionError_
 from .model import BrowseNode
 from .type_mapping import (
     ABSTRACT_TYPES,
@@ -23,7 +25,12 @@ from .type_mapping import (
 
 HAS_PROPERTY = 46
 HAS_SUBTYPE = 45
-CHUNK = 200
+BROWSE_CHUNK = 200  # default nodes per Browse request (when the server declares no lower limit)
+READ_CHUNK = 500  # default nodes per Read request
+MAX_NODES_PER_READ = 11705  # Server_ServerCapabilities_OperationLimits_MaxNodesPerRead
+MAX_NODES_PER_BROWSE = 11710  # Server_ServerCapabilities_OperationLimits_MaxNodesPerBrowse
+
+log = logging.getLogger("opc2ixon.browse")
 
 ProgressCb = Callable[[str, int], None]
 CancelCb = Callable[[], bool]
@@ -53,9 +60,17 @@ def ixon_address(nid: ua.NodeId) -> str | None:
     return None
 
 
-def _chunks(seq, n=CHUNK):
-    for i in range(0, len(seq), n):
-        yield seq[i : i + n]
+def _too_many(e: Exception) -> bool:
+    return getattr(e, "code", None) == ua.StatusCodes.BadTooManyOperations
+
+
+def _too_many_error(service: str, size: int) -> ConnectionError_:
+    return ConnectionError_(
+        f"The server refused a {service} request with {size} node(s): too many operations in one "
+        "request (BadTooManyOperations).\n\n"
+        "Set a lower value in Browse → 'Max nodes per request' in the profile (e.g. 50 or 10), "
+        "or increase the request limit in the configuration of the OPC UA server."
+    )
 
 
 _INDEX_RE = re.compile(r"^\[?(\d+)\]?$")
@@ -91,11 +106,44 @@ class Browser:
         self.cancelled = cancelled or (lambda: False)
         self._dtype_cache: dict[str, tuple[int | None, str]] = {}
         self.count = 0
+        self.browse_chunk = BROWSE_CHUNK
+        self.read_chunk = READ_CHUNK
+
+    # ---- request size ------------------------------------------------------
+    async def _setup_limits(self) -> None:
+        """Nodes per request: the profile value, or the limits declared by the server
+        (OperationLimits MaxNodesPerRead / MaxNodesPerBrowse, 0 = no limit)."""
+        manual = int(getattr(self.profile, "max_nodes_per_request", 0) or 0)
+        if manual > 0:
+            self.browse_chunk = self.read_chunk = manual
+            log.info("Nodes per request: %d (set in the profile)", manual)
+            return
+        try:
+            values = await self.uac.read_attributes(
+                [ua.NodeId(MAX_NODES_PER_READ), ua.NodeId(MAX_NODES_PER_BROWSE)], ua.AttributeIds.Value
+            )
+            limits = []
+            for dv in values:
+                v = dv.Value.Value if dv.StatusCode.is_good() and dv.Value is not None else 0
+                limits.append(int(v) if isinstance(v, int) and v > 0 else 0)
+            if limits[0]:
+                self.read_chunk = min(READ_CHUNK, limits[0])
+            if limits[1]:
+                self.browse_chunk = min(BROWSE_CHUNK, limits[1])
+            log.info(
+                "Server limits: MaxNodesPerRead=%s MaxNodesPerBrowse=%s -> read %d / browse %d per request",
+                limits[0] or "not set", limits[1] or "not set", self.read_chunk, self.browse_chunk,
+            )
+        except Exception as e:  # limits not readable: keep defaults, the fallback handles the rest
+            log.info("Server limits not readable (%s): read %d / browse %d per request",
+                     e, self.read_chunk, self.browse_chunk)
 
     # ---- low level batched services ---------------------------------
     async def _browse_many(self, nids: list[ua.NodeId], *, inverse_subtype=False):
         out: list[list[ua.ReferenceDescription]] = []
-        for chunk in _chunks(nids):
+        i = 0
+        while i < len(nids):
+            chunk = nids[i : i + self.browse_chunk]
             params = ua.BrowseParameters()
             params.View = ua.ViewDescription()
             params.RequestedMaxReferencesPerNode = 0
@@ -115,7 +163,18 @@ class Browser:
                     d.NodeClassMask = int(ua.NodeClass.Object) | int(ua.NodeClass.Variable)
                 descs.append(d)
             params.NodesToBrowse = descs
-            results = await self.uac.browse(params)
+            try:
+                results = await self.uac.browse(params)
+            except Exception as e:
+                if _too_many(e) and len(chunk) > 1:
+                    self.browse_chunk = max(1, len(chunk) // 2)
+                    log.warning("BadTooManyOperations on Browse: retrying with %d nodes per request",
+                                self.browse_chunk)
+                    continue
+                if _too_many(e):
+                    raise _too_many_error("Browse", len(chunk)) from e
+                raise
+            i += len(chunk)
             for r in results:
                 refs = list(r.References or []) if r.StatusCode.is_good() else []
                 cp = r.ContinuationPoint
@@ -131,8 +190,21 @@ class Browser:
 
     async def _read_many(self, nids: list[ua.NodeId], attr: ua.AttributeIds) -> list[ua.DataValue]:
         out: list[ua.DataValue] = []
-        for chunk in _chunks(nids, 500):
-            out.extend(await self.uac.read_attributes(list(chunk), attr))
+        i = 0
+        while i < len(nids):
+            chunk = list(nids[i : i + self.read_chunk])
+            try:
+                out.extend(await self.uac.read_attributes(chunk, attr))
+            except Exception as e:
+                if _too_many(e) and len(chunk) > 1:
+                    self.read_chunk = max(1, len(chunk) // 2)
+                    log.warning("BadTooManyOperations on Read: retrying with %d nodes per request",
+                                self.read_chunk)
+                    continue
+                if _too_many(e):
+                    raise _too_many_error("Read", len(chunk)) from e
+                raise
+            i += len(chunk)
         return out
 
     # ---- data types ----------------------------------------------------
@@ -189,6 +261,7 @@ class Browser:
         else:
             start = ua.NodeId(ua.ObjectIds.ObjectsFolder)
 
+        await self._setup_limits()
         dn = await self._read_many([start], ua.AttributeIds.DisplayName)
         if not dn[0].StatusCode.is_good():
             raise ValueError(f"Start node {p.start_node} not found on the server.")
